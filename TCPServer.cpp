@@ -6,6 +6,7 @@ using namespace std;
 #include <winsock2.h>
 #include <string.h>
 #include <time.h>
+#include <fstream>
 #include <sstream>
 
 struct SocketState
@@ -14,7 +15,7 @@ struct SocketState
 	int	recv;			// Receiving?
 	int	send;			// Sending?
 	int sendSubType;	// Sending sub-type
-	char buffer[128];
+	char buffer[1024];
 	int len;
 	clock_t responseTime;
 	clock_t currentTime;
@@ -25,16 +26,16 @@ struct responseMessage
 {
 	string httpVersion = "HTTP/1.1";
 	string statusCode = "200 OK";
-	string date;
+	string date = "";
 	string serverName = "Server: TCPNonBlockingServer/1.0";
-	string responseData;
-	string contentLength;
+	string responseData = "";
+	string contentLength = "";
 	string contentType = "Content-Type: text/html";
 	string connection = "Connection: keep-alive";
 };
 
 const int TIME_PORT = 27015;
-const int MAX_SOCKETS = 60;
+const int MAX_SOCKETS = 2;
 const int EMPTY = 0;
 const int LISTEN = 1;
 const int RECEIVE = 2;
@@ -54,11 +55,15 @@ bool addSocket(SOCKET id, int what);
 void removeSocket(int index);
 void acceptConnection(int index);
 responseMessage* receiveMessage(int index);
+void ProcessOptionsRequest(responseMessage* response);
+void ProcessGetOrHeadRequest(responseMessage* response, char* request, bool isHead);
+void ProcessPutRequest(responseMessage* response, char* request);
 void RemoveReadCharacters(int index, int numOfChars);
 void sendMessage(int index, responseMessage* response);
-char* ResponseToString(responseMessage* response);
+string ResponseToString(responseMessage* response, bool isHead);
 
 struct SocketState sockets[MAX_SOCKETS] = { 0 };
+responseMessage* responseArray[MAX_SOCKETS] = { nullptr };
 int socketsCount = 0;
 
 
@@ -155,6 +160,22 @@ void main()
 	// Accept connections and handles them one by one.
 	while (true)
 	{
+		// Check for timeouts
+		for (int i = 0; i < MAX_SOCKETS; i++)
+		{
+			if (sockets[i].recv != EMPTY)
+			{
+				clock_t currentTime = clock();
+				double elapsedTime = ((double)currentTime - (double)sockets[i].responseTime) / CLOCKS_PER_SEC;
+				if (elapsedTime > 120)
+				{
+					cout << "Closing socket " << i << " due to timeout." << endl;
+					closesocket(sockets[i].id);
+					removeSocket(i);
+				}
+			}
+		}
+
 		// The select function determines the status of one or more sockets,
 		// waiting if necessary, to perform asynchronous I/O. Use fd_sets for
 		// sets of handles for reading, writing and exceptions. select gets "timeout" for waiting
@@ -206,7 +227,7 @@ void main()
 
 				case RECEIVE:
 					// index of response
-					response = receiveMessage(i);
+					responseArray[i] = receiveMessage(i);
 					break;
 				}
 			}
@@ -220,9 +241,13 @@ void main()
 				switch (sockets[i].send)
 				{
 				case SEND:
-					// index of response
+					responseMessage* response = responseArray[i];
 					if (response != nullptr)
+					{
 						sendMessage(i, response);
+						delete response;
+						responseArray[i] = nullptr;
+					}
 
 					break;
 				}
@@ -297,6 +322,11 @@ responseMessage* receiveMessage(int index)
 
 	if (SOCKET_ERROR == bytesRecv)
 	{
+		if (WSAGetLastError() == WSAEWOULDBLOCK)
+		{
+			return nullptr;
+		}
+
 		cout << "Server: Error at recv(): " << WSAGetLastError() << endl;
 		closesocket(msgSocket);
 		removeSocket(index);
@@ -317,7 +347,7 @@ responseMessage* receiveMessage(int index)
 		sockets[index].responseTime = clock();
 		time_t timeOfNow;
 		time(&timeOfNow);
-		responseMessage* response = new responseMessage(); // TODO FREE
+		responseMessage* response = new responseMessage();
 		response->date = "Date: " + string(ctime(&timeOfNow));
 
 		if (strncmp(sockets[index].buffer, "OPTIONS", 7) == 0)
@@ -325,22 +355,17 @@ responseMessage* receiveMessage(int index)
 			sockets[index].send = SEND;
 			sockets[index].sendSubType = OPTIONS;
 			RemoveReadCharacters(index, 7);
-			// IMPLEMENTATION OF OPTIONS METHOD
-			// "Allow: OPTIONS, GET, HEAD, POST, PUT, DELETE, TRACE"
-			// "Content-Length: 0";
+			ProcessOptionsRequest(response);
 		}
 		else if (strncmp(sockets[index].buffer, "GET", 3) == 0) {
 			sockets[index].send = SEND;
 			sockets[index].sendSubType = GET;
-			RemoveReadCharacters(index, 3);
-			// IMPLEMENTATION OF GET METHOD
-			// Default english website
+			ProcessGetOrHeadRequest(response, sockets[index].buffer, false);
 		}
 		else if (strncmp(sockets[index].buffer, "HEAD", 4) == 0) {
 			sockets[index].send = SEND;
 			sockets[index].sendSubType = HEAD;
-			RemoveReadCharacters(index, 4);
-			// IMPLEMENTATION OF HEAD METHOD
+			ProcessGetOrHeadRequest(response, sockets[index].buffer, true);
 		}
 		else if (strncmp(sockets[index].buffer, "POST", 4) == 0) {
 			sockets[index].send = SEND;
@@ -351,8 +376,7 @@ responseMessage* receiveMessage(int index)
 		else if (strncmp(sockets[index].buffer, "PUT", 3) == 0) {
 			sockets[index].send = SEND;
 			sockets[index].sendSubType = PUT;
-			RemoveReadCharacters(index, 3);
-			// IMPLEMENTATION OF PUT METHOD
+			ProcessPutRequest(response, sockets[index].buffer);
 		}
 		else if (strncmp(sockets[index].buffer, "DELETE", 6) == 0) {
 			sockets[index].send = SEND;
@@ -370,11 +394,163 @@ responseMessage* receiveMessage(int index)
 		{
 			closesocket(msgSocket);
 			removeSocket(index);
+			return nullptr;
 		}
+
+		memset(sockets[index].buffer, 0, sizeof(sockets[index].buffer));
+		sockets[index].len = 0;
 
 		return response;
 	}
 }
+
+void ProcessOptionsRequest(responseMessage* response)
+{
+	response->responseData = "Allow: OPTIONS, GET, HEAD, POST, PUT, DELETE, TRACE";
+	response->contentType = "Content-Type: text/plain";
+	response->contentLength = "Content-Length: " + to_string(response->responseData.size());
+}
+
+void ProcessGetOrHeadRequest(responseMessage* response, char* request, bool isHead)
+{
+	string method, path, version;
+	istringstream requestStream(request);
+	requestStream >> method >> path >> version;
+	
+	string lang = "";
+
+	// Check if language is specified in the path
+	size_t langPos = path.find_last_of("_");
+	if (langPos != string::npos && langPos + 3 < path.length())
+	{
+		lang = path.substr(langPos + 1, 2); // Extract the language code (assuming it's a two-letter code)
+	}
+
+	// Check if language is specified as a query parameter
+	if (path.find("lang=") != string::npos) 
+	{
+		size_t queryPos = path.find('?');
+		if (queryPos != string::npos) 
+		{
+			string query = path.substr(queryPos + 1);
+			size_t langParamPos = query.find("lang=");
+			if (langParamPos != string::npos && langParamPos + 5 <= query.size()) 
+			{
+				size_t endPos = query.find('&', langParamPos);
+				lang = query.substr(langParamPos + 5, (endPos == string::npos ? query.size() : endPos) - (langParamPos + 5));
+			}
+		}
+	}
+
+	string fileName;
+	if (!lang.empty()) 
+	{
+		fileName = "index_" + lang + ".html"; // Generate the file name based on the language
+	}
+	else 
+	{
+		fileName = "index_en.html"; // Default to English if no language is specified
+	}
+
+	std::ifstream file(fileName, ios::binary);
+	if (file)
+	{
+		file.seekg(0, ios::end);
+		streampos fileSize = file.tellg();
+		file.seekg(0, ios::beg);
+
+		response->contentLength = "Content-Length: " + to_string(fileSize);
+
+		if (!isHead)  // GET requests
+		{
+			std::stringstream buffer;
+			buffer << file.rdbuf();
+			response->responseData = buffer.str();
+		}
+
+		file.close();
+	}
+	else 
+	{
+		response->statusCode = "404 Not Found";
+		response->responseData = "File not found";
+		response->contentLength = "Content-Length: " + to_string(response->responseData.length());
+		response->connection = "Connection: close";
+	}
+}
+
+void ProcessPutRequest(responseMessage* response, char* request)
+{
+	string method, path, version;
+	istringstream requestStream(request);
+	requestStream >> method >> path >> version;
+	string fileName;
+	bool validRequest = false;
+
+	if (!path.empty() && path[0] == '/')
+	{
+		path = path.substr(1);
+	}
+
+	size_t queryPos = path.find('?');
+	if (queryPos != string::npos)
+	{
+		fileName = path.substr(0, queryPos);
+	}
+	else
+	{
+		fileName = path;
+	}
+
+	FILE* file = fopen(fileName.c_str(), "wb");
+	if (file) 
+	{
+		// Find the Content-Length header
+		char* contentLengthPos = strstr(request, "Content-Length:");
+		if (contentLengthPos != nullptr)
+		{
+			int contentLength;
+			if (sscanf(contentLengthPos + 15, "%d", &contentLength) == 1)
+			{
+				validRequest = true;
+
+				// Find the start of the data in the request
+				char* dataPos = strstr(request, "\r\n\r\n");
+				if (dataPos != nullptr)
+				{
+					dataPos += 4;
+
+					// Write the data to the file
+					size_t bytesWritten = fwrite(dataPos, sizeof(char), contentLength, file);
+					if (bytesWritten != static_cast<size_t>(contentLength))
+					{
+						// Error while writing to the file
+						response->statusCode = "500 Internal Server Error";
+						response->contentLength = "Content-Length: 0";
+						fclose(file);
+						return;
+					}
+				}
+			}
+		}
+
+		if (!validRequest)
+		{
+			response->statusCode = "400 Bad Request";
+			response->contentLength = "Content-Length: 0";
+		}
+
+		fclose(file);
+	}
+	else 
+	{
+		response->statusCode = "404 Not Found";
+		response->responseData = "File not found";
+		response->contentLength = "Content-Length: " + to_string(response->responseData.length());
+		response->connection = "Connection: close";
+	}
+}
+
 
 void RemoveReadCharacters(int index, int numOfChars)
 {
@@ -384,83 +560,54 @@ void RemoveReadCharacters(int index, int numOfChars)
 
 void sendMessage(int index, responseMessage* response)
 {
-	int bytesSent = 0;
-	char sendBuff[255];
 	SOCKET msgSocket = sockets[index].id;
+	bool isHead = (sockets[index].sendSubType == HEAD);
 
-	sockets[index].currentTime = clock();
-	double responseTime = ((double)sockets[index].currentTime - (double)sockets[index].responseTime) / CLOCKS_PER_SEC;
-	
-	if (responseTime <= 120)
+	string responseStr = ResponseToString(response, isHead);
+	const char* sendBuff = responseStr.c_str();
+	int totalLen = responseStr.length();
+	int bytesSent = 0;
+
+	while (bytesSent < totalLen)
 	{
-		if (sockets[index].sendSubType == OPTIONS)
+		int result = send(msgSocket, sendBuff + bytesSent, totalLen - bytesSent, 0);
+		if (result == SOCKET_ERROR)
 		{
-
+			if (WSAGetLastError() == WSAEWOULDBLOCK)
+			{
+				// Socket is not ready to send, try again later
+				return;
+			}
+			else
+			{
+				cout << "Server: Error at send(): " << WSAGetLastError() << endl;
+				closesocket(msgSocket);
+				removeSocket(index);
+				return;
+			}
 		}
-		else if (sockets[index].sendSubType == GET)
-		{
-
-		}
-		else if (sockets[index].sendSubType == HEAD)
-		{
-			
-		}
-		else if (sockets[index].sendSubType == POST)
-		{
-
-		}
-		else if (sockets[index].sendSubType == PUT)
-		{
-
-		}
-		else if (sockets[index].sendSubType == DEL)
-		{
-
-		}
-		else if (sockets[index].sendSubType == TRACE)
-		{
-
-		}
-
-		strcpy(sendBuff, ResponseToString(response));
-		sendBuff[strlen(sendBuff) - 1] = 0;
-
-		//_itoa((int)timer, sendBuff, 10);
-		bytesSent = send(msgSocket, sendBuff, (int)strlen(sendBuff), 0);
-		if (SOCKET_ERROR == bytesSent)
-		{
-			cout << "Server: Error at send(): " << WSAGetLastError() << endl;
-			return;
-		}
-
-		cout << "Server: Sent: " << bytesSent << "\\" << strlen(sendBuff) << " bytes of \"" << sendBuff << "\" message.\n";
-
-		sockets[index].send = IDLE;
+		bytesSent += result;
 	}
-	else
-	{
-		closesocket(msgSocket);
-		removeSocket(index);
-		cout << "Closing the socket, 120 seconds has passed. timeout." << endl;
-		return;
-	}
+
+	cout << "Server: Sent: " << bytesSent << "\\" << totalLen << " bytes of response.\n";
+	sockets[index].send = IDLE;
 }
 
-char* ResponseToString(responseMessage* response)
+string ResponseToString(responseMessage* response, bool isHead)
 {
 	stringstream responseStream;
 
 	responseStream << response->httpVersion << " " << response->statusCode << "\r\n"
-		<< response->date << "\r\n"
+		<< response->date
 		<< response->serverName << "\r\n"
-		<< response->responseData << "\r\n"
 		<< response->contentLength << "\r\n"
 		<< response->contentType << "\r\n"
 		<< response->connection << "\r\n\r\n";
 
-	string responseStr = responseStream.str();
-	char* responseChar = new char[responseStr.length() + 1];
-	strcpy(responseChar, responseStr.c_str());
+	if (!isHead)
+	{
+		responseStream << response->responseData << "\r\n";
+	}
 
-	return responseChar;
+	return responseStream.str();
 }
