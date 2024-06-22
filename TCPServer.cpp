@@ -7,7 +7,6 @@ using namespace std;
 #include <string.h>
 #include <time.h>
 #include <sstream>
-#include <curl/curl.h>
 
 struct SocketState
 {
@@ -358,7 +357,6 @@ void sendMessage(int index)
 {
 	int bytesSent = 0;
 	char sendBuff[255];
-	stringstream responseStream;
 	double responseTime;
 	SOCKET msgSocket = sockets[index].id;
 	sockets[index].currentTime = clock();
@@ -366,22 +364,17 @@ void sendMessage(int index)
 	time_t timeOfNow;
 	time(&timeOfNow);
 
-	// HEAD /index.html
+	stringstream responseStream;
+	responseStream << "HTTP/1.1 200 OK\r\n"
+				   << "Date: " << ctime(&timeOfNow)
+		           << "Server: TCPNonBlockingServer/1.0\r\n";
+	
 	if (responseTime <= 120)
 	{
 		if (sockets[index].sendSubType == OPTIONS)
 		{
-
-			responseStream << "HTTP/1.1 200 OK\r\n"
-						   << "Date: " << ctime(&timeOfNow)
-						   << "Server: TCPNonBlockingServer/1.0\r\n"
-						   << "Allow: OPTIONS, GET, HEAD, POST, PUT, DELETE, TRACE\r\n"
-						   << "Content-Length: 0\r\n"
-						   << "Content-Type: text/html\r\n"
-						   << "Connection: keep-alive\r\n"
-						   << "\r\n";
-
-			strcpy(sendBuff, responseStream.str().c_str());
+			responseStream << "Allow: OPTIONS, GET, HEAD, POST, PUT, DELETE, TRACE\r\n"
+						   << "Content-Length: 0\r\n";
 		}
 		else if (sockets[index].sendSubType == GET)
 		{
@@ -408,6 +401,10 @@ void sendMessage(int index)
 
 		}
 
+		responseStream << "Content-Type: text/html\r\n"
+			           << "Connection: keep-alive\r\n"
+			           << "\r\n";
+		strcpy(sendBuff, responseStream.str().c_str());
 		sendBuff[strlen(sendBuff) - 1] = 0;
 
 		//_itoa((int)timer, sendBuff, 10);
