@@ -489,17 +489,7 @@ void ProcessPutRequest(responseMessage* response, char* request)
 
 	if (!path.empty() && path[0] == '/')
 	{
-		path = path.substr(1);
-	}
-
-	size_t queryPos = path.find('?');
-	if (queryPos != string::npos)
-	{
-		fileName = path.substr(0, queryPos);
-	}
-	else
-	{
-		fileName = path;
+		fileName = path.substr(1);
 	}
 
 	FILE* file = fopen(fileName.c_str(), "wb");
@@ -513,6 +503,7 @@ void ProcessPutRequest(responseMessage* response, char* request)
 			if (sscanf(contentLengthPos + 15, "%d", &contentLength) == 1)
 			{
 				validRequest = true;
+				response->contentLength = to_string(contentLength);
 
 				// Find the start of the data in the request
 				char* dataPos = strstr(request, "\r\n\r\n");
@@ -600,13 +591,18 @@ string ResponseToString(responseMessage* response, bool isHead)
 	responseStream << response->httpVersion << " " << response->statusCode << "\r\n"
 		<< response->date
 		<< response->serverName << "\r\n"
-		<< response->contentLength << "\r\n"
-		<< response->contentType << "\r\n"
-		<< response->connection << "\r\n\r\n";
+		<< response->contentType << "\r\n";
 
-	if (!isHead)
-	{
+	if (!isHead && !response->responseData.empty()) {
+		responseStream << "Content-Length: " << response->responseData.size() << "\r\n";
+		responseStream << response->connection << "\r\n\r\n";
 		responseStream << response->responseData << "\r\n";
+	}
+	else // Empty response body
+	{
+		responseStream << "Content-Length: 0\r\n"; 
+		responseStream << response->connection << "\r\n\r\n";
+
 	}
 
 	return responseStream.str();
