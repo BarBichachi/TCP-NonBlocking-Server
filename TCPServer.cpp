@@ -20,6 +20,19 @@ struct SocketState
 	clock_t currentTime;
 };
 
+// Our response with default values
+struct responseMessage
+{
+	string httpVersion = "HTTP/1.1";
+	string statusCode = "200 OK";
+	string date;
+	string serverName = "Server: TCPNonBlockingServer/1.0";
+	string responseData;
+	string contentLength;
+	string contentType = "Content-Type: text/html";
+	string connection = "Connection: keep-alive";
+};
+
 const int TIME_PORT = 27015;
 const int MAX_SOCKETS = 60;
 const int EMPTY = 0;
@@ -40,9 +53,10 @@ const int TRACE = 7;
 bool addSocket(SOCKET id, int what);
 void removeSocket(int index);
 void acceptConnection(int index);
-void receiveMessage(int index);
+responseMessage* receiveMessage(int index);
 void RemoveReadCharacters(int index, int numOfChars);
-void sendMessage(int index);
+void sendMessage(int index, responseMessage* response);
+char* ResponseToString(responseMessage* response);
 
 struct SocketState sockets[MAX_SOCKETS] = { 0 };
 int socketsCount = 0;
@@ -175,6 +189,9 @@ void main()
 			WSACleanup();
 			return;
 		}
+		
+		// make it with index
+		responseMessage* response = nullptr;
 
 		for (int i = 0; i < MAX_SOCKETS && nfd > 0; i++)
 		{
@@ -188,7 +205,8 @@ void main()
 					break;
 
 				case RECEIVE:
-					receiveMessage(i);
+					// index of response
+					response = receiveMessage(i);
 					break;
 				}
 			}
@@ -202,7 +220,10 @@ void main()
 				switch (sockets[i].send)
 				{
 				case SEND:
-					sendMessage(i);
+					// index of response
+					if (response != nullptr)
+						sendMessage(i, response);
+
 					break;
 				}
 			}
@@ -268,7 +289,7 @@ void acceptConnection(int index)
 	return;
 }
 
-void receiveMessage(int index)
+responseMessage* receiveMessage(int index)
 {
 	SOCKET msgSocket = sockets[index].id;
 	int len = sockets[index].len;
@@ -279,13 +300,13 @@ void receiveMessage(int index)
 		cout << "Server: Error at recv(): " << WSAGetLastError() << endl;
 		closesocket(msgSocket);
 		removeSocket(index);
-		return;
+		return nullptr;
 	}
 	if (bytesRecv == 0)
 	{
 		closesocket(msgSocket);
 		removeSocket(index);
-		return;
+		return nullptr;
 	}
 	else
 	{
@@ -293,56 +314,65 @@ void receiveMessage(int index)
 		cout << "Server: Received: " << bytesRecv << " bytes of \"" << &sockets[index].buffer[len] << "\" message.\n";
 
 		sockets[index].len += bytesRecv;
+		sockets[index].responseTime = clock();
+		time_t timeOfNow;
+		time(&timeOfNow);
+		responseMessage* response = new responseMessage(); // TODO FREE
+		response->date = "Date: " + string(ctime(&timeOfNow));
 
 		if (strncmp(sockets[index].buffer, "OPTIONS", 7) == 0)
 		{
 			sockets[index].send = SEND;
 			sockets[index].sendSubType = OPTIONS;
 			RemoveReadCharacters(index, 7);
-			return;
+			// IMPLEMENTATION OF OPTIONS METHOD
+			// "Allow: OPTIONS, GET, HEAD, POST, PUT, DELETE, TRACE"
+			// "Content-Length: 0";
 		}
 		else if (strncmp(sockets[index].buffer, "GET", 3) == 0) {
 			sockets[index].send = SEND;
 			sockets[index].sendSubType = GET;
 			RemoveReadCharacters(index, 3);
-			return;
+			// IMPLEMENTATION OF GET METHOD
+			// Default english website
 		}
 		else if (strncmp(sockets[index].buffer, "HEAD", 4) == 0) {
 			sockets[index].send = SEND;
 			sockets[index].sendSubType = HEAD;
 			RemoveReadCharacters(index, 4);
-			return;
+			// IMPLEMENTATION OF HEAD METHOD
 		}
 		else if (strncmp(sockets[index].buffer, "POST", 4) == 0) {
 			sockets[index].send = SEND;
 			sockets[index].sendSubType = POST;
 			RemoveReadCharacters(index, 4);
-			return;
+			// IMPLEMENTATION OF POST METHOD
 		}
 		else if (strncmp(sockets[index].buffer, "PUT", 3) == 0) {
 			sockets[index].send = SEND;
 			sockets[index].sendSubType = PUT;
 			RemoveReadCharacters(index, 3);
-			return;
+			// IMPLEMENTATION OF PUT METHOD
 		}
 		else if (strncmp(sockets[index].buffer, "DELETE", 6) == 0) {
 			sockets[index].send = SEND;
 			sockets[index].sendSubType = DEL;
 			RemoveReadCharacters(index, 6);
-			return;
+			// IMPLEMENTATION OF DELETE METHOD
 		}
 		else if (strncmp(sockets[index].buffer, "TRACE", 5) == 0) {
 			sockets[index].send = SEND;
 			sockets[index].sendSubType = TRACE;
 			RemoveReadCharacters(index, 5);
-			return;
+			// IMPLEMENTATION OF TRACE METHOD
 		}
 		else if (strncmp(sockets[index].buffer, "Exit", 4) == 0)
 		{
 			closesocket(msgSocket);
 			removeSocket(index);
-			return;
 		}
+
+		return response;
 	}
 }
 
@@ -352,29 +382,20 @@ void RemoveReadCharacters(int index, int numOfChars)
 	sockets[index].len -= numOfChars;
 }
 
-
-void sendMessage(int index)
+void sendMessage(int index, responseMessage* response)
 {
 	int bytesSent = 0;
 	char sendBuff[255];
-	double responseTime;
 	SOCKET msgSocket = sockets[index].id;
-	sockets[index].currentTime = clock();
-	responseTime = ((double)sockets[index].currentTime - (double)sockets[index].responseTime) / CLOCKS_PER_SEC;
-	time_t timeOfNow;
-	time(&timeOfNow);
 
-	stringstream responseStream;
-	responseStream << "HTTP/1.1 200 OK\r\n"
-				   << "Date: " << ctime(&timeOfNow)
-		           << "Server: TCPNonBlockingServer/1.0\r\n";
+	sockets[index].currentTime = clock();
+	double responseTime = ((double)sockets[index].currentTime - (double)sockets[index].responseTime) / CLOCKS_PER_SEC;
 	
 	if (responseTime <= 120)
 	{
 		if (sockets[index].sendSubType == OPTIONS)
 		{
-			responseStream << "Allow: OPTIONS, GET, HEAD, POST, PUT, DELETE, TRACE\r\n"
-						   << "Content-Length: 0\r\n";
+
 		}
 		else if (sockets[index].sendSubType == GET)
 		{
@@ -382,7 +403,7 @@ void sendMessage(int index)
 		}
 		else if (sockets[index].sendSubType == HEAD)
 		{
-
+			
 		}
 		else if (sockets[index].sendSubType == POST)
 		{
@@ -401,10 +422,7 @@ void sendMessage(int index)
 
 		}
 
-		responseStream << "Content-Type: text/html\r\n"
-			           << "Connection: keep-alive\r\n"
-			           << "\r\n";
-		strcpy(sendBuff, responseStream.str().c_str());
+		strcpy(sendBuff, ResponseToString(response));
 		sendBuff[strlen(sendBuff) - 1] = 0;
 
 		//_itoa((int)timer, sendBuff, 10);
@@ -426,4 +444,23 @@ void sendMessage(int index)
 		cout << "Closing the socket, 120 seconds has passed. timeout." << endl;
 		return;
 	}
+}
+
+char* ResponseToString(responseMessage* response)
+{
+	stringstream responseStream;
+
+	responseStream << response->httpVersion << " " << response->statusCode << "\r\n"
+		<< response->date << "\r\n"
+		<< response->serverName << "\r\n"
+		<< response->responseData << "\r\n"
+		<< response->contentLength << "\r\n"
+		<< response->contentType << "\r\n"
+		<< response->connection << "\r\n\r\n";
+
+	string responseStr = responseStream.str();
+	char* responseChar = new char[responseStr.length() + 1];
+	strcpy(responseChar, responseStr.c_str());
+
+	return responseChar;
 }
