@@ -58,6 +58,9 @@ responseMessage* receiveMessage(int index);
 void ProcessOptionsRequest(responseMessage* response);
 void ProcessGetOrHeadRequest(responseMessage* response, char* request, bool isHead);
 void ProcessPutRequest(responseMessage* response, char* request);
+void ProcessTraceRequest(responseMessage* response, char* request);
+void ProcessDeleteRequest(responseMessage* response, char* request);
+void ProcessPostRequest(responseMessage* response, char* request);
 void RemoveReadCharacters(int index, int numOfChars);
 void sendMessage(int index, responseMessage* response);
 string ResponseToString(responseMessage* response, bool isHead);
@@ -371,7 +374,7 @@ responseMessage* receiveMessage(int index)
 			sockets[index].send = SEND;
 			sockets[index].sendSubType = POST;
 			RemoveReadCharacters(index, 4);
-			// IMPLEMENTATION OF POST METHOD
+			ProcessPostRequest(response, sockets[index].buffer);
 		}
 		else if (strncmp(sockets[index].buffer, "PUT", 3) == 0) {
 			sockets[index].send = SEND;
@@ -382,13 +385,13 @@ responseMessage* receiveMessage(int index)
 			sockets[index].send = SEND;
 			sockets[index].sendSubType = DEL;
 			RemoveReadCharacters(index, 6);
-			// IMPLEMENTATION OF DELETE METHOD
+			ProcessDeleteRequest(response, sockets[index].buffer);
 		}
 		else if (strncmp(sockets[index].buffer, "TRACE", 5) == 0) {
 			sockets[index].send = SEND;
 			sockets[index].sendSubType = TRACE;
 			RemoveReadCharacters(index, 5);
-			// IMPLEMENTATION OF TRACE METHOD
+			ProcessTraceRequest(response, sockets[index].buffer);
 		}
 		else if (strncmp(sockets[index].buffer, "Exit", 4) == 0)
 		{
@@ -542,6 +545,40 @@ void ProcessPutRequest(responseMessage* response, char* request)
 	}
 }
 
+
+void ProcessPostRequest(responseMessage* response, char* request) {
+	response->statusCode = "200 OK";
+	response->responseData = "POST request received.";
+	response->contentType = "Content-Type: text/plain";
+	response->contentLength = "Content-Length: " + to_string(response->responseData.size());
+}
+
+void ProcessDeleteRequest(responseMessage* response, char* request) {
+	string method, path, version;
+	istringstream requestStream(request);
+	requestStream >> method >> path >> version;
+
+	string filePath = path.substr(1); // Remove leading '/'
+
+	if (remove(filePath.c_str()) == 0) {
+		response->statusCode = "204 No Content";
+		response->responseData = "";
+		response->contentLength = "Content-Length: 0";
+	}
+	else {
+		response->statusCode = "404 Not Found";
+		response->responseData = "File not found: " + filePath;
+		response->contentType = "Content-Type: text/plain";
+		response->contentLength = "Content-Length: " + to_string(response->responseData.size());
+	}
+}
+
+void ProcessTraceRequest(responseMessage* response, char* request) {
+	response->statusCode = "200 OK";
+	response->responseData = string(request);
+	response->contentType = "Content-Type: message/http";
+	response->contentLength = "Content-Length: " + to_string(response->responseData.size());
+}
 
 void RemoveReadCharacters(int index, int numOfChars)
 {
