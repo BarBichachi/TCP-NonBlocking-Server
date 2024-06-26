@@ -213,8 +213,7 @@ void main()
 			WSACleanup();
 			return;
 		}
-		
-		// make it with index
+
 		responseMessage* response = nullptr;
 
 		for (int i = 0; i < MAX_SOCKETS && nfd > 0; i++)
@@ -248,8 +247,9 @@ void main()
 					if (response != nullptr)
 					{
 						sendMessage(i, response);
-						delete response;
+						delete responseArray[i];
 						responseArray[i] = nullptr;
+						break;
 					}
 
 					break;
@@ -360,37 +360,40 @@ responseMessage* receiveMessage(int index)
 			RemoveReadCharacters(index, 7);
 			ProcessOptionsRequest(response);
 		}
-		else if (strncmp(sockets[index].buffer, "GET", 3) == 0) {
+		else if (strncmp(sockets[index].buffer, "GET", 3) == 0)
+		{
 			sockets[index].send = SEND;
 			sockets[index].sendSubType = GET;
 			ProcessGetOrHeadRequest(response, sockets[index].buffer, false);
 		}
-		else if (strncmp(sockets[index].buffer, "HEAD", 4) == 0) {
+		else if (strncmp(sockets[index].buffer, "HEAD", 4) == 0)
+		{
 			sockets[index].send = SEND;
 			sockets[index].sendSubType = HEAD;
 			ProcessGetOrHeadRequest(response, sockets[index].buffer, true);
 		}
-		else if (strncmp(sockets[index].buffer, "POST", 4) == 0) {
+		else if (strncmp(sockets[index].buffer, "POST", 4) == 0) 
+		{
 			sockets[index].send = SEND;
 			sockets[index].sendSubType = POST;
-			RemoveReadCharacters(index, 4);
 			ProcessPostRequest(response, sockets[index].buffer);
 		}
-		else if (strncmp(sockets[index].buffer, "PUT", 3) == 0) {
+		else if (strncmp(sockets[index].buffer, "PUT", 3) == 0)
+		{
 			sockets[index].send = SEND;
 			sockets[index].sendSubType = PUT;
 			ProcessPutRequest(response, sockets[index].buffer);
 		}
-		else if (strncmp(sockets[index].buffer, "DELETE", 6) == 0) {
+		else if (strncmp(sockets[index].buffer, "DELETE", 6) == 0)
+		{
 			sockets[index].send = SEND;
 			sockets[index].sendSubType = DEL;
-			RemoveReadCharacters(index, 6);
 			ProcessDeleteRequest(response, sockets[index].buffer);
 		}
-		else if (strncmp(sockets[index].buffer, "TRACE", 5) == 0) {
+		else if (strncmp(sockets[index].buffer, "TRACE", 5) == 0) 
+		{
 			sockets[index].send = SEND;
 			sockets[index].sendSubType = TRACE;
-			RemoveReadCharacters(index, 5);
 			ProcessTraceRequest(response, sockets[index].buffer);
 		}
 		else if (strncmp(sockets[index].buffer, "Exit", 4) == 0)
@@ -410,7 +413,7 @@ responseMessage* receiveMessage(int index)
 void ProcessOptionsRequest(responseMessage* response)
 {
 	response->responseData = "Allow: OPTIONS, GET, HEAD, POST, PUT, DELETE, TRACE";
-	response->contentType = "Content-Type: text/plain";
+	response->contentType = "Content-Type: text/html";
 	response->contentLength = "Content-Length: " + to_string(response->responseData.size());
 }
 
@@ -448,11 +451,11 @@ void ProcessGetOrHeadRequest(responseMessage* response, char* request, bool isHe
 	string fileName;
 	if (!lang.empty()) 
 	{
-		fileName = "index_" + lang + ".html"; // Generate the file name based on the language
+		fileName = "C:/Temp/index_" + lang + ".html"; // Generate the file name based on the language
 	}
 	else 
 	{
-		fileName = "index_en.html"; // Default to English if no language is specified
+		fileName = "C:/Temp/index_en.html"; // Default to English if no language is specified
 	}
 
 	std::ifstream file(fileName, ios::binary);
@@ -492,7 +495,11 @@ void ProcessPutRequest(responseMessage* response, char* request)
 
 	if (!path.empty() && path[0] == '/')
 	{
-		fileName = path.substr(1);
+		fileName = "C:/Temp" + path; 
+	}
+	else
+	{
+		fileName = "C:/Temp/" + path;  // Prepend C:/Temp/ if the path doesn't start with a slash
 	}
 
 	FILE* file = fopen(fileName.c_str(), "wb");
@@ -516,14 +523,20 @@ void ProcessPutRequest(responseMessage* response, char* request)
 
 					// Write the data to the file
 					size_t bytesWritten = fwrite(dataPos, sizeof(char), contentLength, file);
-					if (bytesWritten != static_cast<size_t>(contentLength))
+					if (bytesWritten == static_cast<size_t>(contentLength)) 
 					{
-						// Error while writing to the file
-						response->statusCode = "500 Internal Server Error";
-						response->contentLength = "Content-Length: 0";
-						fclose(file);
-						return;
-					}
+                        // Successful write to file
+                        response->statusCode = "200 OK";
+                        response->responseData = "PUT request processed successfully.";
+                        response->contentType = "Content-Type: text/plain";
+                    }
+					else 
+					{
+                        // Error while writing to the file
+                        response->statusCode = "500 Internal Server Error";
+                        response->responseData = "Failed to write data to file.";
+                        response->contentType = "Content-Type: text/plain";
+                    }
 				}
 			}
 		}
@@ -545,27 +558,100 @@ void ProcessPutRequest(responseMessage* response, char* request)
 	}
 }
 
+void ProcessPostRequest(responseMessage* response, char* request)
+{
+	string method, path, version;
+	istringstream requestStream(request);
+	requestStream >> method >> path >> version;
+	string fileName;
+	bool validRequest = false;
 
-void ProcessPostRequest(responseMessage* response, char* request) {
-	response->statusCode = "200 OK";
-	response->responseData = "POST request received.";
-	response->contentType = "Content-Type: text/plain";
-	response->contentLength = "Content-Length: " + to_string(response->responseData.size());
+	if (!path.empty() && path[0] == '/')
+	{
+		fileName = "C:/Temp" + path;
+	}
+	else
+	{
+		fileName = "C:/Temp/" + path;  // Prepend C:/Temp/ if the path doesn't start with a slash
+	}
+
+	FILE* file = fopen(fileName.c_str(), "a");
+	if (file)
+	{
+		// Find the Content-Length header
+		char* contentLengthPos = strstr(request, "Content-Length:");
+		if (contentLengthPos != nullptr)
+		{
+			int contentLength;
+			if (sscanf(contentLengthPos + 15, "%d", &contentLength) == 1)
+			{
+				validRequest = true;
+				response->contentLength = to_string(contentLength);
+
+				// Find the start of the data in the request
+				char* dataPos = strstr(request, "\r\n\r\n");
+				if (dataPos != nullptr)
+				{
+					dataPos += 4;
+
+					// Write the data to the file
+					size_t bytesWritten = fwrite(dataPos, sizeof(char), contentLength, file);
+					if (bytesWritten == static_cast<size_t>(contentLength)) {
+						response->statusCode = "200 OK";
+						response->responseData = "POST Request went successfully, added the required data to " + fileName;
+						response->contentType = "Content-Type: text/plain";
+					}
+					else 
+					{
+						response->statusCode = "500 Internal Server Error";
+						response->responseData = "Failed to write data to file.";
+						response->contentType = "Content-Type: text/plain";
+					}
+				}
+			}
+		}
+
+		if (!validRequest)
+		{
+			response->statusCode = "400 Bad Request";
+			response->contentLength = "Content-Length: 0";
+		}
+
+		fclose(file);
+	}
+	else
+	{
+		response->statusCode = "404 Not Found";
+		response->responseData = "File not found";
+		response->contentLength = "Content-Length: " + to_string(response->responseData.length());
+		response->connection = "Connection: close";
+	}
 }
 
-void ProcessDeleteRequest(responseMessage* response, char* request) {
+void ProcessDeleteRequest(responseMessage* response, char* request) 
+{
 	string method, path, version;
 	istringstream requestStream(request);
 	requestStream >> method >> path >> version;
 
-	string filePath = path.substr(1); // Remove leading '/'
+	string filePath;
+	if (!path.empty() && path[0] == '/')
+	{
+		filePath = "C:/Temp" + path;  // Prepend C:/Temp to the path
+	}
+	else
+	{
+		filePath = "C:/Temp/" + path;  // Prepend C:/Temp/ if the path doesn't start with a slash
+	}
 
-	if (remove(filePath.c_str()) == 0) {
+	if (remove(filePath.c_str()) == 0) 
+	{
 		response->statusCode = "204 No Content";
 		response->responseData = "";
 		response->contentLength = "Content-Length: 0";
 	}
-	else {
+	else
+	{
 		response->statusCode = "404 Not Found";
 		response->responseData = "File not found: " + filePath;
 		response->contentType = "Content-Type: text/plain";
@@ -573,7 +659,8 @@ void ProcessDeleteRequest(responseMessage* response, char* request) {
 	}
 }
 
-void ProcessTraceRequest(responseMessage* response, char* request) {
+void ProcessTraceRequest(responseMessage* response, char* request) 
+{
 	response->statusCode = "200 OK";
 	response->responseData = string(request);
 	response->contentType = "Content-Type: message/http";
@@ -630,16 +717,13 @@ string ResponseToString(responseMessage* response, bool isHead)
 		<< response->serverName << "\r\n"
 		<< response->contentType << "\r\n";
 
-	if (!isHead && !response->responseData.empty()) {
-		responseStream << "Content-Length: " << response->responseData.size() << "\r\n";
-		responseStream << response->connection << "\r\n\r\n";
-		responseStream << response->responseData << "\r\n";
-	}
-	else // Empty response body
-	{
-		responseStream << "Content-Length: 0\r\n"; 
-		responseStream << response->connection << "\r\n\r\n";
+	responseStream << "Content-Length: " << response->responseData.size() << "\r\n";
+	responseStream << response->connection << "\r\n\r\n";
 
+	// Add the response data only if it's not a HEAD request
+	if (!isHead && !response->responseData.empty())
+	{
+		responseStream << response->responseData;
 	}
 
 	return responseStream.str();
